@@ -10,6 +10,7 @@ Guides:
 
 Require Import Stdlib.Lists.List.
 Import ListNotations. 
+Require Import Coq.Bool.Bool.
 
 (* ################## Parameters of DLp ################## *)
 
@@ -18,6 +19,15 @@ Parameter F : Type. (* type of formulas *)
 Parameter L : Type. (* type of labels *)
 
 (* PS: temporally, we do not need label mappings, as it only relates to the level of semantics *)
+
+(* assume an equivalence between two atomic formulas in F *)
+Parameter eq_F : F -> F -> bool.
+(* assume an equivalence between two programs in P *)
+Parameter eq_P : P -> P -> bool.
+(* assume an equivalence between two labels in L *)
+Parameter eq_L : L -> L -> bool.
+
+(* assume an equality between two programs in P *)
 
 Section DLpLogic.
 (* ################## Syntax of DLp formulas ################## *)
@@ -113,6 +123,17 @@ Section testIsDynamic.
     (* test of negation operator *)
 End testIsDynamic.
 
+(* equivalence of DLF formulas *)
+Fixpoint eq_DLF (p1 p2 : DLF) : bool :=
+    match p1, p2 with
+    | tv, tv => true
+    | af f1, af f2 => if eq_F f1 f2 then true else false
+    | bx a1 p1', bx a2 p2' => if (eq_P a1 a2) && (eq_DLF p1' p2') then true else false
+    | ng p1', ng p2' => eq_DLF p1' p2'
+    | ad p11 p12, ad p21 p22 => if (eq_DLF p11 p21) && (eq_DLF p12 p22) then true else false
+    | _, _ => false
+    end
+.
 
 End DLpLogic.
 
@@ -147,6 +168,17 @@ Section DLpSeq.
     .
 
     Check LDLF.
+
+    (* equivalence of LDLF formulas *)
+    Definition eq_LDLF (p1 p2 : LDLF) : bool :=
+        match p1, p2 with
+        | lb l1 phi1, lb l2 phi2 => if (eq_L l1 l2) && (eq_DLF phi1 phi2) then true else false
+        | pt (a1, l1) (a2, l2), pt (b1, m1) (b2, m2) => 
+            if (eq_P a1 b1) && (eq_L l1 m1) && (eq_P a2 b2) && (eq_L l2 m2) then true else false
+        | ptr (a, l), ptr (b, m) => if (eq_P a b) && (eq_L l m) then true else false
+        | _, _ => false
+        end
+    .
 
     (* ################## Labelled sequents ################## *)
     Inductive LSeq : Type :=
@@ -226,7 +258,9 @@ Fixpoint lsubl (sub : L -> L) (l : list LDLF) : list LDLF :=
     end
 .
 
-(* label mappings as a parameter *)
+(* assume a match function for labelled sequents *)
+Parameter mats : LSeq -> LSeq -> bool.
+
 Section DLpProof.
     (* ################## Cyclic Proof system of DLp ################## *)
     Section testStruc.
@@ -280,6 +314,46 @@ Section DLpProof.
     .
     *)
     End testPrv. 
+
+    (* manipulation of sequents *)
+    (* target a formula in a list of labelled formulas *)
+    (* find the formula (to be targeted) in the list, if failed, return the list itself, if success, move this formula to the top of the list, while keeping the remaining of the list as the same as before *)
+    Fixpoint tarf_r (p : LDLF) (l : list LDLF) (hd : list LDLF) : list LDLF :=
+        match l with
+        | nil => hd
+        | q :: ls =>
+            if (eq_LDLF q p) then
+                (q :: hd) ++ ls
+            else
+                tarf_r p ls (hd ++ [q])
+        end
+    .
+
+    Definition tarf (p : LDLF) (l : list LDLF) : list LDLF :=
+        match l with
+        | nil => nil
+        | q :: ls => 
+            if (eq_LDLF q p) then
+                l
+            else
+                tarf_r p ls [q]
+        end
+    .
+
+    (* match a sequent in a list of labelled sequents, starting from an index value *)
+    Fixpoint matsl (s : LSeq) (l : list LSeq) (i : nat) : bool :=
+        match l with
+        | nil => false
+        | s' :: ls => 
+            match i with
+            | 0 => if mats s s' then 
+                                true 
+                            else 
+                                matsl s ls 0
+            | S i' => matsl s ls i'
+            end
+        end
+    .
 
     (* provability of labelled sequents *)
     Inductive prv : CycLSeq -> Prop :=
@@ -479,7 +553,7 @@ Section DLpProof.
                     ) (* side condition *)
                     ->
                     prv (
-                            cseq (lseq gamma ((lb l' (bx alp' phi)) :: delta)) (cinfo (s :: R) (pi + 1))
+                            cseq (lseq gamma ((lb l' (bx alp' phi)) :: delta)) (cinfo (s :: R) 0) (* [alp]R in our setting is always progressive *)
                         ) (* premise *)
             ) (* end of inner forall *)
                 -> 
@@ -513,7 +587,7 @@ Section DLpProof.
                     ) (* side condition *)
                 /\
                 prv (
-                        cseq (lseq ((lb l' (bx alp' phi)) :: gamma) delta) (cinfo (s :: R) (pi + 1))
+                        cseq (lseq ((lb l' (bx alp' phi)) :: gamma) delta) (cinfo (s :: R) 0) (* it is progressive *)
                     ) (* premise *)
                 /\
                 ptrprv (
@@ -526,8 +600,37 @@ Section DLpProof.
                         ) (* conclusion *)
         ) (* end of ``let in'' *)
     (* ################## Rules for manipulating sequents ################## *)
-    
+    (* rule of re-target a formula on the left side *)
+    | tarfL : forall (gamma delta : list LDLF) (phi : LDLF) (R : list LSeq) (pi : nat), 
+        let s := (lseq gamma delta) in (
+            prv (
+                    cseq (lseq (tarf phi gamma) delta) (cinfo (s :: R) (pi + 1))
+                ) (* premise *)
+                ->
+                    prv (
+                            cseq s (cinfo R pi)
+                        ) (* conclusion *)
+        ) (* end of ``let in'' *)
+    (* rule of re-target a formula on the right side *)
+    | tarfR : forall (gamma delta : list LDLF) (phi : LDLF) (R : list LSeq) (pi : nat), 
+        let s := (lseq gamma delta) in (
+            prv (
+                    cseq (lseq gamma (tarf phi delta)) (cinfo (s :: R) (pi + 1))
+                ) (* premise *)
+                ->
+                    prv (
+                            cseq s (cinfo R pi)
+                        ) (* conclusion *)
+        ) (* end of ``let in'' *)
     (* ################## Rules for cyclic deductions ################## *)
+    | cyc : forall (gamma delta : list LDLF) (R : list LSeq) (pi : nat), 
+        let s := (lseq gamma delta) in (
+            matsl s R pi = true
+            -> (* if the sequent s matches with one of the sequents in R starting from position pi *)
+                prv (
+                        cseq s (cinfo R pi)
+                    ) (* conclusion *)
+        ) (* end of ``let in'' *)
     .
 End DLpProof. 
 
