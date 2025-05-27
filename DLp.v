@@ -27,7 +27,6 @@ Parameter eq_P : P -> P -> bool.
 (* assume an equivalence between two labels in L *)
 Parameter eq_L : L -> L -> bool.
 
-(* assume an equality between two programs in P *)
 
 Section DLpLogic.
 (* ################## Syntax of DLp formulas ################## *)
@@ -633,7 +632,6 @@ Section DLpProof.
         ) (* end of ``let in'' *)
     .
 End DLpProof. 
-
 
 
 
